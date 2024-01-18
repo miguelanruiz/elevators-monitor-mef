@@ -37,3 +37,5 @@
 ## Annexes
 **Annex 1.** Finite State Machine Diagram
 ![](./img/MEF.jpeg)
+**Annex 2.** Demo product
+![](./img/WORKING.jpeg)
