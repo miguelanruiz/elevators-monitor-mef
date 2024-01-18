@@ -1,6 +1,8 @@
 
 # Elevators Monitor MEF (Finite State Machine)
 
+![](./img/WORKING.png)
+
 ## Description
 **Elevators Monitor MEF** synergizes cutting-edge software engineering with embedded systems, showcasing a sophisticated simulation of elevator operations using a Finite State Machine (FSM). This project uniquely combines a Qt-based application and an STM32F103C8T6 microcontroller, embodying advanced concepts in computer science and engineering.
 
@@ -37,5 +39,3 @@
 ## Annexes
 **Annex 1.** Finite State Machine Diagram
 ![](./img/MEF.jpeg)
-**Annex 2.** Demo product
-![](./img/WORKING.jpeg)
