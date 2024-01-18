@@ -1,5 +1,7 @@
 #include "widget.h"
 #include "ui_widget.h"
+#include "SerialManager.h"
+#include "StyleManager.h"
 #include <QDebug>
 #include <QThread>
 #include <QMessageBox>
@@ -9,63 +11,21 @@
 Widget::Widget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
+    , serialManager(new SerialManager(this))
 {
     ui->setupUi(this);
     init_crc8();
+
+    // Pass the ui pointer to the StyleManager.
+    styleManager = new StyleManager(ui);
+    styleManager->setButtonStyles(this);
+
     for(int i = 0; i < 10; i++){
         firstKeyboard[i] = '0';
         secondKeyboard[i] = '0';
     }
-    ui->floor_s2->display(-2);
-    ui->floor_s1->display(-1);
-    ui->floor_1->display(1);
-    ui->floor_2->display(2);
-    ui->floor_3->display(3);
-    ui->floor_4->display(4);
-    ui->floor_5->display(5);
-    ui->floor_6->display(6);
-    ui->floor_7->display(7);
-    ui->floor_8->display(8);
 
-    QLCD display;
-    display.up[0] = QPixmap(":/spanish/s2_up");
-    display.up[1] = QPixmap(":/spanish/s1_up");
-    display.up[2] = QPixmap(":/spanish/1_up");
-    display.up[3] = QPixmap(":/spanish/2_up");
-    display.up[4] = QPixmap(":/spanish/3_up");
-    display.up[5] = QPixmap(":/spanish/4_up");
-    display.up[6] = QPixmap(":/spanish/5_up");
-    display.up[7] = QPixmap(":/spanish/6_up");
-    display.up[8] = QPixmap(":/spanish/7_up");
-    display.up[9] = QPixmap(":/spanish/8_up");
-    display.down[0] = QPixmap(":/spanish/s2_up");
-    display.down[1] = QPixmap(":/spanish/s1_down");
-    display.down[2] = QPixmap(":/spanish/1_down");
-    display.down[3] = QPixmap(":/spanish/2_down");
-    display.down[4] = QPixmap(":/spanish/3_down");
-    display.down[5] = QPixmap(":/spanish/4_down");
-    display.down[6] = QPixmap(":/spanish/5_down");
-    display.down[7] = QPixmap(":/spanish/6_down");
-    display.down[8] = QPixmap(":/spanish/7_down");
-    display.down[9] = QPixmap(":/spanish/8_down");
-
-    locationlDisplay = display;
-    classDoors[0] = QPixmap(":/spanish/just_closed");
-    classDoors[1] = QPixmap(":/spanish/opening_one");
-    classDoors[2] = QPixmap(":/spanish/opening_one");
-    classDoors[3] = QPixmap(":/spanish/opening_two");
-    classDoors[4] = QPixmap(":/spanish/opening_two");
-    classDoors[5] = QPixmap(":/spanish/opening_three");
-    classDoors[6] = QPixmap(":/spanish/opening_three");
-    classDoors[7] = QPixmap(":/spanish/opening_three");
-    classDoors[8] = QPixmap(":/spanish/opening_three");
-    classDoors[9] = QPixmap(":/spanish/opening_two");
-    classDoors[10] = QPixmap(":/spanish/opening_two");
-    classDoors[11] = QPixmap(":/spanish/opening_one");
-    classDoors[12] = QPixmap(":/spanish/opening_one");
-    classDoors[13] = QPixmap(":/spanish/just_closed");
-
-    QKeyboadAscensor keyboard;
+    QKeyboardAscensor keyboard;
     keyboard.first[0] = ui->asOne_s2;
     keyboard.first[1] = ui->asOne_s1;
     keyboard.first[2] = ui->asOne_1;
@@ -100,7 +60,9 @@ Widget::Widget(QWidget *parent)
     ascensor.objects[7] = ui->a1_6;
     ascensor.objects[8] = ui->a1_7;
     ascensor.objects[9] = ui->a1_8;
+
     ascOne = ascensor;
+
     QPositionLabels ascensorNew;
     ascensorNew.objects[0] = ui->a2_s2;
     ascensorNew.objects[1] = ui->a2_s1;
@@ -112,24 +74,24 @@ Widget::Widget(QWidget *parent)
     ascensorNew.objects[7] = ui->a2_6;
     ascensorNew.objects[8] = ui->a2_7;
     ascensorNew.objects[9] = ui->a2_8;
+
     ascTwo = ascensorNew;
+
     foreach(const QSerialPortInfo &info, QSerialPortInfo::availablePorts()){
+        qDebug() << "----------- Found device -----------";
         qDebug() << "Name: " << info.portName();
         qDebug() << "Description: " << info.description();
         qDebug() << "Manufacturer: " << info.manufacturer();
         qDebug() << "Vendor: " << info.vendorIdentifier();
         qDebug() << "Product: " << info.productIdentifier();
+        qDebug() << "------------------------------------";
         ui->comboCOM->addItem(info.portName());
     }
-    //ui->bajar_8->setIcon(QIcon(QPixmap(":/spanish/go_down_no_active")));
-    setButtonsStyle();
-    QTimer::singleShot(600, this, SLOT(displayDoors()));
-    modem_STM = new QSerialPort(this);
-}
 
-Widget::~Widget()
-{
-    delete ui;
+    QTimer::singleShot(TIMEOUT_SCREEN_SAMPLING, this, SLOT(displayDoors()));
+
+    connect(serialManager, &SerialManager::dataReceived, this, &Widget::handleSerialData);
+    connect(serialManager, &SerialManager::errorOccurred, this, &Widget::handleSerialError);
 }
 
 void Widget::displayDoors()
@@ -139,7 +101,7 @@ void Widget::displayDoors()
             displayDoorOne = 0;
             animOne = 11;
         }else {
-            ascOne.objects[animOne]->setPixmap(classDoors[displayDoorOne]);
+            ascOne.objects[animOne]->setPixmap(animDoor[displayDoorOne]);
         }
     }
     if(animTwo < 11){
@@ -148,514 +110,262 @@ void Widget::displayDoors()
             animTwo = 11;
         }
         else{
-            ascTwo.objects[animTwo]->setPixmap(classDoors[displayDoorTwo]);
+            ascTwo.objects[animTwo]->setPixmap(animDoor[displayDoorTwo]);
         }
     }
-    QTimer::singleShot(600, this, SLOT(displayDoors()));
+    QTimer::singleShot(TIMEOUT_SCREEN_SAMPLING, this, SLOT(displayDoors()));
 }
 
-void Widget::readSerial()
+void Widget::handleSerialData(const QByteArray &data)
 {
-    QByteArray serialData = modem_STM->readAll();
-    const char *pointer = serialData.constData();
-    qDebug()<<"readed"<<serialData.constData();
-    if(pointer[1] == '1'){
-        for(int i = 6 ; i < 16; i++){
+    const char *pointer = data.constData();
+    qDebug() << " Received: "<< data.constData();
+    if(pointer[1] == ELEVATOR_ID_A ){
+        for(int i = FLOOR_BUTTONS_START_INDEX_A; i < SIZE_PAGE_ASCENSOR; i++){
             if(pointer[i] == '1' ){
-                keyboardButtons.first[i-6]->setEnabled(true);
+                keyboardButtons.first[i-FLOOR_BUTTONS_START_INDEX_A]->setEnabled(true);
             }
         }
-        for(int i = 22 ; i < 32; i++){
+        for(int i = FLOOR_BUTTONS_START_INDEX_B; i < SIZE_PAGE_ASCENSOR * NUM_ELEVATORS; i++){
             if(pointer[i] == '1' ){
-                keyboardButtons.second[i-22]->setEnabled(true);
+                keyboardButtons.second[i-FLOOR_BUTTONS_START_INDEX_B]->setEnabled(true);
             }
         }
-        if(pointer[3] == '1'){
+        if(pointer[BIT_UP_A] == '1'){
             ui->locationOne->setPixmap(QPixmap(":/spanish/up"));
             ui->logReg->append(QString("Ascensor 1 subiendo..."));
-            for(int i = 6; i < 16; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_A; i < SIZE_PAGE_ASCENSOR; i++){
                 if(pointer[32] == '1' && pointer[i] == '1'){
-                    //ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.up[i-6]);
-                    animOne = i-6;
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A ,"UP"));
+                    animOne = i-FLOOR_BUTTONS_START_INDEX_A;
                 }
                 else if(pointer[i] == '1'){
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/active_closed"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.up[i-6]);
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A, "UP"));
                 }
                 else{
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
-        else if(pointer[5] == '1'){
+        else if(pointer[BIT_DOWN_A] == '1'){
             ui->locationOne->setPixmap(QPixmap(":/spanish/down"));
             ui->logReg->append(QString("Ascensor 1 bajando..."));
-            for(int i = 6; i < 16; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_A; i < SIZE_PAGE_ASCENSOR; i++){
                 if(pointer[32] == '1' && pointer[i] == '1'){
-                    //ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.down[i-6]);
-                    animOne = i-6;
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A, "DOWN"));
+                    animOne = i-FLOOR_BUTTONS_START_INDEX_A;
                 }
                 else if(pointer[i] == '1'){
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/active_closed"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.down[i-6]);
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A, "DOWN"));
                 }
                 else{
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
         else{
             ui->locationOne->setPixmap(QPixmap(":/spanish/stop"));
             ui->logReg->append(QString("Ascensor 1 detenido..."));
-            for(int i = 6; i < 16; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_A; i < SIZE_PAGE_ASCENSOR; i++){
                 if(pointer[32] == '1' && pointer[i] == '1'){
-                    //ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.down[i-6]);
-                    animOne = i-6;
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A, "DOWN"));
+                    animOne = i-FLOOR_BUTTONS_START_INDEX_A;
                 }
                 else if(pointer[i] == '1' && animOne == 11){
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/active_closed"));
-                    ui->asOne_indicator->setPixmap(locationlDisplay.down[i-6]);
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asOne_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_A, "DOWN"));
                 }
                 else if(animOne == 11){
-                    ascOne.objects[i-6]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascOne.objects[i-FLOOR_BUTTONS_START_INDEX_A]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
-        /*for(int i = 0; i < serialData.size(); i++){
-            qDebug()<<pointer[i];
-        }*/
     }
-    if(pointer[17] == '2'){
-        if(pointer[19] == '1'){
+    if(pointer[17] == ELEVATOR_ID_B ){
+        if(pointer[BIT_UP_B] == '1'){
             ui->locationTwo->setPixmap(QPixmap(":/spanish/up"));
             ui->logReg->append(QString("Ascensor 2 subiendo..."));
-            for(int i = 22; i < 32; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_B; i < SIZE_PAGE_ASCENSOR * NUM_ELEVATORS; i++){
                 if(pointer[33] == '1' && pointer[i] == '1'){
-                    //ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asTwo_indicator->setPixmap(locationlDisplay.up[i-22]);
-                    animTwo = i-22;
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B ,"UP"));
+                    animTwo = i-FLOOR_BUTTONS_START_INDEX_B;
                 }
                 else if(pointer[i] == '1'){
-                    ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/active_closed"));
-                    ui->asTwo_indicator->setPixmap(locationlDisplay.up[i-22]);
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B ,"UP"));
                 }
                 else {
-                    ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
-        else if(pointer[21] == '1'){
+        else if(pointer[BIT_DOWN_B] == '1'){
             ui->locationTwo->setPixmap(QPixmap(":/spanish/down"));
             ui->logReg->append(QString("Ascensor 2 bajando..."));
-            for(int i = 22; i < 32; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_B; i < SIZE_PAGE_ASCENSOR * NUM_ELEVATORS; i++){
                 if(pointer[33] == '1' && pointer[i] == '1'){
-                    //ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asTwo_indicator->setPixmap(locationlDisplay.down[i-22]);
-                    animTwo = i-22;
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B, "DOWN"));
+                    animTwo = i-FLOOR_BUTTONS_START_INDEX_B;
                 }
                 else if(pointer[i] == '1'){
-                   ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/active_closed"));
-                   ui->asTwo_indicator->setPixmap(locationlDisplay.down[i-22]);
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B, "DOWN"));
                 }
                 else{
-                    ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
         else{
             ui->locationTwo->setPixmap(QPixmap(":/spanish/stop"));
             ui->logReg->append(QString("Ascensor 2 detenido..."));
-            for(int i = 22; i < 32; i++){
+            for(int i = FLOOR_BUTTONS_START_INDEX_B; i < SIZE_PAGE_ASCENSOR * NUM_ELEVATORS; i++){
                 if(pointer[33] == '1' && pointer[i] == '1'){
-                    //ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/opening_three"));
-                    ui->asTwo_indicator->setPixmap(locationlDisplay.down[i-22]);
-                    animTwo = i-22;
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B, "DOWN"));
+                    animTwo = i-FLOOR_BUTTONS_START_INDEX_B;
                 }
                 if(pointer[i] == '1' && animTwo == 11){
-                    ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/active_closed"));
-                    ui->asTwo_indicator->setPixmap(locationlDisplay.up[i-22]);
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/active_closed"));
+                    ui->asTwo_indicator->setPixmap(styleManager->getLocationPixmap(i-FLOOR_BUTTONS_START_INDEX_B ,"UP"));
                 }
                 else if(animTwo == 11){
-                    ascTwo.objects[i-22]->setPixmap(QPixmap(":/spanish/unused"));
+                    ascTwo.objects[i-FLOOR_BUTTONS_START_INDEX_B]->setPixmap(QPixmap(":/spanish/unused"));
                 }
             }
         }
     }
 }
 
+void Widget::handleSerialError(const QString &error) {
+    // What to do ?
+    qCritical() << " ERROR: "<< error.constData();
+}
+
 void Widget::on_comButton_clicked()
 {
-    ui->comButton->setDisabled(true);
-    modem_STM->setPortName(ui->comboCOM->currentText());
-    modem_STM->setBaudRate(QSerialPort::Baud115200);
-    modem_STM->setDataBits(QSerialPort::Data8);
-    modem_STM->setParity(QSerialPort::NoParity);
-    modem_STM->setStopBits(QSerialPort::OneStop);
-    modem_STM->setFlowControl(QSerialPort::NoFlowControl);
-    modem_STM->setReadBufferSize(34);
-    connect(modem_STM, SIGNAL(readyRead()),this, SLOT(readSerial()));
+    // If open, then close.
+    if(serialManager->isConnected()) {
+        serialManager->disconnect();
+        ui->comButton->setEnabled(true);
+        ui->comboCOM->setEnabled(true);
+        qDebug() << "Desconectado";
+    } else {
+        // Set port and try to connect.
+        QString portName = ui->comboCOM->currentText();
 
-    if(modem_STM->isOpen()){
-          modem_STM->close();
-          ui->comButton->setEnabled(true);
-          qDebug()<< "Desconectado";
-          disconnect(modem_STM, SIGNAL(readyRead()),this, SLOT(readSerial()));
-    }
-    else {
-    if(modem_STM->open(QIODevice::ReadWrite)){
-        qDebug() << "Conected";
-        ui->comboCOM->setDisabled(true);
-        connect(modem_STM, SIGNAL(readyRead()),this, SLOT(readSerial()));
-    }else{
-        QMessageBox::critical(this,tr("Error"), modem_STM->errorString());
-    }
+        if(serialManager->openSerialPort(portName)) {
+            qDebug() << "Conectado";
+            ui->comboCOM->setDisabled(true);
+            connect(serialManager, &SerialManager::dataReceived, this, &Widget::handleSerialData);
+            connect(serialManager, &SerialManager::errorOccurred, this, &Widget::handleSerialError);
+        } else {
+            QMessageBox::critical(this, tr("ERROR"), serialManager->errorString());
+            ui->comButton->setEnabled(true);
+        }
     }
 }
 
+void Widget::sendElevatorRequest(const QString &requestType, const QString &floor) {
+    QString data = QString("AX%1%2").arg(requestType, floor);
+    QByteArray sendThis = data.toUtf8();
+
+    // Use QByteArray for the data and then get a pointer to the data for crc8.
+    sendThis.append(crc8(reinterpret_cast<unsigned char*>(sendThis.data()), sendThis.size()));
+
+    serialManager->writeData(sendThis);
+}
+
+
 void Widget::on_bajar_8_clicked()
 {
-    QString data("A1S0B1F9");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F9";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F9");
 }
 
 void Widget::on_subir_7_clicked()
 {
-    QString data("A1S1B0F8");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F8";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F8");
 }
 
 void Widget::on_bajar_7_clicked()
 {
-    QString data("A1S0B1F8");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F8";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F8");
 }
 
 void Widget::on_subir_6_clicked()
 {
-    QString data("A1S1B0F7");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F7";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F7");
 }
 
 void Widget::on_bajar_6_clicked()
 {
-    QString data("A1S0B1F7");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F7";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F7");
 }
 
 void Widget::on_subir_5_clicked()
 {
-    QString data("A1S1B0F6");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F6";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F6");
 }
 
 void Widget::on_bajar_5_clicked()
 {
-    QString data("A1S0B1F6");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F6";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F6");
 }
 
 void Widget::on_subir_4_clicked()
 {
-    QString data("A1S1B0F5");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F5";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F5");
 }
 
 void Widget::on_bajar_4_clicked()
 {
-    QString data("A1S0B1F5");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F5";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F5");
 }
 
 void Widget::on_subir_3_clicked()
 {
-    QString data("A1S1B0F4");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F4";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F4");
 }
 
 void Widget::on_bajar_3_clicked()
 {
-    QString data("A1S0B1F4");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F4";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F4");
 }
 
 void Widget::on_subir_2_clicked()
 {
-    QString data("A1S1B0F3");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F3";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F3");
 }
 
 void Widget::on_bajar_2_clicked()
 {
-    QString data("A1S0B1F3");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F3";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F3");
 }
 
 void Widget::on_subir_1_clicked()
 {
-    QString data("A1S1B0F2");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F2";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F2");
 }
 
 void Widget::on_bajar_1_clicked()
 {
-    QString data("A1S0B1F2");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F2";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F2");
 }
 
 void Widget::on_subir_s1_clicked()
 {
-    QString data("A1S1B0F1");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F1";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S1B0", "F1");
 }
 
 void Widget::on_bajar_s1_clicked()
 {
-    QString data("A1S0B1F1");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S0B1F1";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
+    sendElevatorRequest("S0B1", "F1");
 }
 
 void Widget::on_subir_s2_clicked()
 {
-    QString data("A1S1B0F0");
-    QByteArray sendThis;
-    unsigned char calculateCRC[] = "A1S1B0F0";
-    sendThis.append(data);
-    sendThis.append(crc8(calculateCRC, 8));
-    modem_STM->write(sendThis);
-}
-
-void Widget::setButtonsStyle(){
-    ui->bajar_8->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_7->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_7->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_6->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_6->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_5->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_5->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_4->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_4->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_3->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_3->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->bajar_s1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_down_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_down_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_s1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->subir_s2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/go_up_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/go_up_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/go_up_active) ;}");
-    ui->asOne_1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/1_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/1_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/1_keep) ;}");
-    ui->asOne_2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/2_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/2_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/2_keep) ;}");
-    ui->asOne_3->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/3_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/3_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/3_keep) ;}");
-    ui->asOne_4->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/4_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/4_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/4_keep) ;}");
-    ui->asOne_5->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/5_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/5_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/5_keep) ;}");
-    ui->asOne_6->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/6_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/6_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/6_keep) ;}");
-    ui->asOne_7->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/7_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/7_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/7_keep) ;}");
-    ui->asOne_8->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/8_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/8_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/8_keep) ;}");
-    ui->asOne_s1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/s1_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/s1_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/s1_keep) ;}");
-    ui->asOne_s2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/s2_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/s2_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/s2_keep) ;}");
-    ui->asTwo_1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/1_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/1_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/1_keep) ;}");
-    ui->asTwo_2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/2_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/2_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/2_keep) ;}");
-    ui->asTwo_3->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/3_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/3_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/3_keep) ;}");
-    ui->asTwo_4->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/4_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/4_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/4_keep) ;}");
-    ui->asTwo_5->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/5_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/5_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/5_keep) ;}");
-    ui->asTwo_6->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/6_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/6_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/6_keep) ;}");
-    ui->asTwo_7->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/7_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/7_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/7_keep) ;}");
-    ui->asTwo_8->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/8_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/8_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/8_keep) ;}");
-    ui->asTwo_s1->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/s1_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/s1_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/s1_keep) ;}");
-    ui->asTwo_s2->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/s2_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/s2_active) ;}"
-        "QPushButton:disabled{border-image: url(:/spanish/s2_keep) ;}");
-    ui->asOne_send->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/close_doors_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/close_doors_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/close_doors_pressed) ;}");
-    ui->asTwo_send->setStyleSheet(
-        "QPushButton{border-image: url(:/spanish/close_doors_no_active) ;}"
-        "QPushButton:hover{border-image: url(:/spanish/close_doors_active) ;}"
-        "QPushButton:pressed{border-image: url(:/spanish/close_doors_pressed) ;}");
+    sendElevatorRequest("S1B0", "F0");
 }
 
 void Widget::on_asOne_1_clicked()
@@ -778,36 +488,29 @@ void Widget::on_asTwo_s2_clicked()
     keyboardButtons.second[0]->setDisabled(true);
 }
 
-void Widget::on_asOne_send_clicked()
-{
-    QByteArray data;
-    unsigned char calculateCRC[] = "TFS10000000000";
-    QString prefix("TFS1");
-    data.append(QByteArray::fromHex(prefix.toLatin1().toHex()));
-    for(int i = 0; i < 10; i++){
-        data.append(firstKeyboard[i]);
-        calculateCRC[i+4] = firstKeyboard[i];
-        firstKeyboard[i] = '0';
-        //keyboardButtons.first[i]->setEnabled(true);
-    }
-    data.append(crc8(calculateCRC+4, 10));
-    modem_STM->write(data);
+void Widget::on_asOne_send_clicked() {
+    sendData("TFS1", firstKeyboard);
 }
 
-void Widget::on_asTwo_send_clicked()
-{
+void Widget::on_asTwo_send_clicked() {
+    sendData("TFS2", secondKeyboard);
+}
+
+void Widget::sendData(const QString &prefix, unsigned char *keyboard) {
     QByteArray data;
-    unsigned char calculateCRC[] = "TFS20000000000";
-    QString prefix("TFS2");
-    data.append(QByteArray::fromHex(prefix.toLatin1().toHex()));
+    unsigned char calculateCRC[14];
+    QString command = prefix + "0000000000";
+    memcpy(calculateCRC, command.toLatin1().data(), 14);
+
     for(int i = 0; i < 10; i++){
-        data.append(secondKeyboard[i]);
-        calculateCRC[i+4] = secondKeyboard[i];
-        secondKeyboard[i] = '0';
-        //keyboardButtons.second[i]->setEnabled(true);
+        calculateCRC[i+4] = keyboard[i];
+        keyboard[i] = '0';
     }
+
+    data.append(prefix.toLatin1());
+    data.append(static_cast<char>(crc8(calculateCRC+4, 10)));
     data.append(crc8(calculateCRC+4, 10));
-    modem_STM->write(data);
+    serialManager->writeData(data);
 }
 
 void Widget::init_crc8()
@@ -815,12 +518,11 @@ void Widget::init_crc8()
     int i,j;
     unsigned char crc;
     if (!made_table) {
-    for (i=0; i<256; i++) {
-        crc = i;
-        for (j=0; j<8; j++)
-            crc = (crc << 1) ^ ((crc & 0x80) ? DI : 0);
-        crc8_table[i] = crc & 0xFF;
-             /* printf("table[%d] = %d (0x%X)\n", i, crc, crc); */
+        for (i=0; i<256; i++) {
+            crc = i;
+            for (j=0; j<8; j++)
+                crc = (crc << 1) ^ ((crc & 0x80) ? DI : 0);
+            crc8_table[i] = crc & 0xFF;
         }
         made_table=1;
     }
@@ -828,17 +530,24 @@ void Widget::init_crc8()
 
 unsigned char Widget::crc8(unsigned char *message, unsigned char length)
 {
-      unsigned char i, j, crc = 0;
+    unsigned char i, j, crc = 0;
 
-      for (i = 0; i < length; i++)
-      {
+    for (i = 0; i < length; i++)
+    {
         crc ^= message[i];
         for (j = 0; j < 8; j++)
         {
-          if (crc & 1)
-            crc ^= GP;
-          crc >>= 1;
+            if (crc & 1)
+                crc ^= GP;
+            crc >>= 1;
         }
-      }
+    }
     return crc;
+}
+
+Widget::~Widget()
+{
+    delete styleManager;
+    delete serialManager;
+    delete ui;
 }
